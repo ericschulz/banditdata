@@ -1,7 +1,7 @@
-Bandits Experiment
+Now what?
 
-> Eric Schulz. May 2022.
-> A simple bandit experiment. Code is legacy. Please forgive.
+> Eric Schulz. June 2022.
+> You've collected your data, now what?
 
 ##  Current experiment
 
