@@ -1,0 +1,288 @@
+---
+title: "I've got my data, now what?"
+author: "Eric Schulz"
+date: "6/21/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE}
+#load packages
+library(plyr)
+library(ggplot2)
+library(lsr)
+library(lmerTest)
+library(ggridges)
+
+#read in data
+dlin<-read.csv('lindata.csv')
+#show names of variables
+names(dlin)
+#show head (first ten entries) of the data
+head(dlin, 10)
+
+#summary
+summary(dlin)
+#check if anything looks odd, i.e. min, max, mean, etc.
+
+#reliability check
+#aggregate over participant id to get the sum of trials in ran, pos, and neg
+ddply(dlin, ~id, summarize, rancount=sum(cond=="ran"), poscount=sum(cond=="pos"), negcount=sum(cond=="neg"))
+#this should be 100 for each
+
+#First simple plot is a histogram
+#aggregate over id to get mean reward
+dmu<-ddply(dlin, ~id, summarize, mu=mean(out))
+#plot
+p_hist<-ggplot(data=dmu, aes(mu)) + 
+  #histogram
+  geom_histogram()+
+  ylab("Count")+
+  #x-lab
+  xlab("Mean rewards")+ 
+  #theme
+  theme_classic()+
+  #font change
+  theme(text = element_text(size=21,  family="sans"))
+#show the plot
+p_hist
+
+#who is significantly bad?
+dtest<-ddply(dlin, ~id, summarize, sigbad=t.test(out, mu=30, alternative = 'greater')$p.value>0.01)
+#reorder based on bad participants
+dtest<-dtest[order(-dtest$sigbad),]
+#show first 20 participants
+head(dtest, 20)
+#looks like seven are bad
+
+#get the good ones
+dtest<-subset(dtest, sigbad==0)
+#keep them
+dlin<-subset(dlin, id %in% dtest$id)
+#new aggregation
+dmu<-ddply(dlin, ~id, summarize, mu=mean(out))
+#new histogram
+p_hist<-ggplot(data=dmu, aes(mu)) + 
+  geom_histogram()+
+  ylab("Count")+
+  #x-lab
+  xlab("Mean rewards")+ 
+  #theme
+  theme_classic()+
+  #font change
+  theme(text = element_text(size=21,  family="sans"))
+#show
+p_hist
+#looks much better
+
+#confidence interval function
+#95% CI is approximated as mu+1.96*standard error
+ci<-function(x){1.96*sd(x)/sqrt(length(x))}
+
+#summarize data by condition
+dp<-ddply(dlin, ~cond, summarize, m=mean(out), ci=ci(out))
+
+#create plot
+p1 <- ggplot(dp, aes(y=m, x=cond, fill=cond)) +
+  #show mean
+  stat_summary(fun = mean, geom = "bar", position = "dodge", color='black', width=0.5) + 
+  #points
+  geom_point()+
+  #error bars +/- CIs
+  geom_errorbar(aes(ymin=m-ci, ymax=m+ci), color='black', width = .25, position=position_dodge((width=0.9))) +
+  #ylab
+  ylab("Average reward")+
+  #x-lab
+  xlab("Condition")+ 
+  #theme
+  theme_classic()+
+  #theme change
+  theme(text = element_text(size=21,  family="sans"), legend.position="none")+
+  #no legend
+  #scale y
+  scale_y_continuous(expand = c(0,0),limits = c(0,50)) +
+  #title
+  ggtitle("Performance")
+#show
+p1
+
+#by trial and condition
+dp<-ddply(dlin, ~cond+trial, summarize, mu=mean(out), ci=ci(out))
+#dodge
+pd <- position_dodge(.2)
+#plot
+p2<-ggplot(dp, aes(x=trial, y=mu, col=cond)) +
+  geom_point(position =pd)+
+  #error bars
+  geom_errorbar(aes(ymin=mu-ci, ymax=mu+ci), width=0, size=1, position=pd) +
+  #lines
+  geom_line(position=pd, size=1.2) +
+  #classic theme, legend on bottom
+  theme_classic()+theme(text = element_text(size=12,  family="sans"), 
+                        strip.background=element_blank(),
+                        legend.position="top")+
+  scale_x_continuous(breaks = round(seq(min(0), max(10), by = 1),1)) +
+  scale_y_continuous(breaks = round(seq(min(0), max(50), by = 2),1)) +
+  ylab("Mean reward")+xlab("Trial")+
+  #change theme
+  theme(text = element_text(size=20, family="sans"))+
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        legend.title =  element_blank())+ggtitle("Reward over trials")
+#show plot
+p2
+
+#aggregate by round and condition
+dp<-ddply(dlin, ~cond+round, summarize, mu=mean(out), ci=ci(out))
+#plot
+p3<-ggplot(dp, aes(x=round, y=mu, col=cond)) +
+  geom_point(position =pd)+
+  #error bars
+  geom_errorbar(aes(ymin=mu-ci, ymax=mu+ci), width=0, size=1, position=pd) +
+  #lines
+  geom_line(position=pd, size=1.2) +
+  theme_classic()+theme(strip.background=element_blank(),
+                        legend.position="top")+
+  scale_x_continuous(breaks = round(c(1, seq(min(5), max(30), by = 5)),1)) +
+  scale_y_continuous(breaks = round(seq(min(0), max(50), by = 2),1)) +
+  ylab("Mean reward")+xlab("Round")+
+  #change theme
+  theme(text = element_text(size=20, family="sans"))+
+  theme(axis.line = element_line(colour = "black"),
+        legend.title =  element_blank())+ggtitle("Reward over rounds")
+#show
+p3
+
+#Cohen's d (is an effect size measure, i.e. the standardized difference between two groups)
+#initialize vectors (30 rounds in total)
+dp<-dn<-rep(0,30)
+#loop over rounds
+for (i in 1:30){
+  #get cohens d when comparing pos against ran
+  dp[i]<-cohensD(subset(dlin, round==i & cond =="ran")$out, subset(dlin, round==i & cond =="pos")$out)
+  #get cohens d when comparing neg against ran
+  dn[i]<-cohensD(subset(dlin, round==i & cond =="ran")$out, subset(dlin, round==i & cond =="neg")$out)
+}
+#data frame
+dd<-data.frame(round=rep(1:30, 2), d=c(dp, dn), cond=rep(c("Positive", "Negative"), each=30))
+
+#plot
+p4<-ggplot(dd, aes(x=round, y=d, col=cond)) +
+  geom_point(size=2, alpha=0.7) +
+  #add a linear line into these dots including confidence bands
+  geom_ribbon(stat='smooth', method = "lm", se=TRUE, alpha=0.05, aes(color = NULL, group=cond)) +
+  geom_line(stat='smooth', method = "lm") + #classic theme, legend on bottom
+  theme_minimal()+theme(text = element_text(size=20,  family="sans"), 
+                        strip.background=element_blank(),
+                        legend.position="top")+
+  scale_x_continuous(breaks = round(c(1, seq(min(5), max(30), by = 5)),1)) +
+  ylab("Cohen's d")+xlab("Round")+ggtitle("Comparison")
+#show
+p4
+
+#movements needs differences
+dlin$diff<-c(0, diff(dlin$arm))
+#previous reward
+dlin$prev<-c(0,dlin$out[-length(dlin$out)])
+#exclude first and last trial
+dd<-subset(dlin, trial!=30 & trial!=1)
+#plot
+p5 <- ggplot(dd, aes(x=prev, y = diff, color = cond, fill=cond)) +
+  geom_smooth() +
+  ylab('Move on t+1')+
+  xlab('Reward on t')+ggtitle("Moves")+
+  theme_minimal()+theme(text = element_text(size=20,  family="sans"), 
+                        strip.background=element_blank(),
+                        legend.position="top")
+#show
+p5
+
+#round as factor
+dlin$Round<-as.factor(dlin$round)
+#We only plot this for some rounds
+p6 <- ggplot(subset(dlin, trial<=5 & round %in% c(1,2,5,15,30)), aes(x = arm, y = Round)) + 
+  geom_density_ridges()+ ylab("Round")+theme_minimal() +xlab("Arm")+
+  scale_x_continuous(breaks = round(seq(min(1), max(8), by = 1),1), labels=c("A","S","D","F","J","K","L", ";")) +
+  ggtitle("Sampling")+
+  theme(text = element_text(size=20,  family="serif"), 
+                                strip.background=element_blank(),
+                                legend.position="none")
+p6
+
+#Behavioral tests
+#relevel such that random is baseline
+dlin$cond<-relevel(dlin$cond, ref='ran')
+#simple model
+msimple_null<-lmer(out~1+(cond|id), data=dlin)
+#alternative model
+msimple_alter<-lmer(out~cond+(cond|id), data=dlin)
+#comparison
+anova(msimple_null, msimple_alter)
+#results
+summary(msimple_alter)
+
+
+#Same for trials
+msimple_null<-lmer(out~1+(trial|id), data=dlin)
+msimple_alter<-lmer(out~trial+(trial|id), data=dlin)
+anova(msimple_null, msimple_alter)
+
+#all fixed effects
+mfull<-lmer(out~cond+round+trial+(1|id), data=dlin)
+#summary
+summary(mfull)
+
+#function to see if it's 35 or more (breaking 35)
+breaklim<-function(x){
+  out<-length(x)
+  for (i in seq_along(x)){
+    if (x[i]>35){
+      out<-i
+      break}
+  }
+  return(out)
+}
+
+#when does each participants break above 35 on each round
+dd<-ddply(dlin, ~id+round, summarize, m=breaklim(out))
+#is this correlated with round number?
+dd<-ddply(dd, ~id, summarize, c=cor(round, m))
+#test correlation
+t.test(dd$c)
+
+
+
+#compare this for structured vs. random rounds
+dd<-ddply(dlin, ~id+round+cond, summarize, m=breaklim(out))
+dd$struc<-ifelse(dd$cond=="ran", "ran", "struc")
+dd<-ddply(dd, ~id+struc, summarize, c=cor(round, m))
+t.test(subset(dd, struc=="ran")$c-subset(dd, struc=="struc")$c)
+
+
+#Cohen's d
+#intialize the vector
+effect<-rep(0, 30)
+#structured or not
+dlin$struc<-ifelse(dlin$cond=="ran", 0, 1)
+for (i in 1:30){
+  #select per round
+  dsub<-subset(dlin, round==i)
+  #get the sign of the effect
+  m<-sign(mean(subset(dsub, struc==1)$out)-mean(subset(dsub, struc==0)$out))
+  #get effect and multiply by sign
+  effect[i]<-cohensD(subset(dsub, struc==0)$out,subset(dsub, struc==1)$out)*m
+}
+#frequentist correlation
+cor.test(effect, 1:30)
+
+#outer most arms
+dlin$outmost<-ifelse(dlin$arm %in% c(1,8), 1, 0)
+dd<-ddply(dlin, ~round, summarize, p=mean(outmost))
+#does this get more frequent?
+cor.test(dd$p, 1:30)
+```
